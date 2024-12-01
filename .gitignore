@@ -1,0 +1,8 @@
+# Exclure l'environnement virtuel
+env/
+
+# Exclure les fichiers de logs
+*.log
+
+# Exclure les fichiers générés
+outputs/
