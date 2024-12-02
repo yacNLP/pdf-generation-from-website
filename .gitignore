@@ -6,3 +6,7 @@ env/
 
 # Exclure les fichiers générés
 outputs/
+
+# Exclure les fichiers de json
+*.json
+
