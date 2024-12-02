@@ -17,7 +17,7 @@ logging.basicConfig(
 
 def explore_section(page, section_name, url):
     """
-    Explore une section pour identifier les patterns structurels.
+    Explore une section pour identifier les patterns structurels, incluant les liens dans les tableaux et autres structures.
     
     Args:
         page: Instance de la page Playwright.
@@ -37,13 +37,39 @@ def explore_section(page, section_name, url):
 
         # Extraction des liens internes
         links = []
+
+        # Parcourir tous les liens globaux
         for link in soup.find_all("a", href=True):
             href = link["href"]
+            # Filtrer pour inclure uniquement les liens internes pertinents
             if href.startswith("/view/") or urljoin(url, href).startswith("https://help.autodesk.com"):
                 links.append({
                     "text": link.get_text(strip=True),
                     "url": urljoin(url, href)
                 })
+
+        # Rechercher les liens et descriptions dans les tableaux
+        tables = soup.find_all("table")
+        for table in tables:
+            for row in table.find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) == 2:  # S'assurer qu'il y a deux colonnes
+                    # Colonne 1 : Lien
+                    link_cell = cells[0].find("a", href=True)
+                    if link_cell:
+                        href = link_cell["href"]
+                        link_text = link_cell.get_text(strip=True)
+
+                        # Colonne 2 : Description
+                        description = cells[1].get_text(strip=True)
+
+                        # Ajouter les données extraites
+                        links.append({
+                            "text": link_text,
+                            "url": urljoin(url, href),
+                            "description": description
+                        })
+
 
         # Analyse des structures HTML
         patterns = {
