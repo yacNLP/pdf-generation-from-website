@@ -87,20 +87,26 @@ def main():
 
         # Ajouter le contenu principal
         if main_content:
-            combined_content += f"<div>{main_content}</div>"
-            downloaded_sections.append("The Hitchhiker's Guide to AutoCAD")  # Ajouter la section principale
+            soup = BeautifulSoup(main_content, "html.parser")
+            main_title = soup.find("h1")
+            if main_title and not main_title.get("id"):
+                main_title["id"] = "The_Hitchhiker's_Guide_to_AutoCAD"
+            combined_content += str(soup)
+            downloaded_sections.append(main_title["id"])
 
         # Ajouter le contenu des sous-liens internes
         for link in internal_links:
             try:
                 sub_content, _ = fetch_main_content(page, link["url"], base_url)
                 if sub_content:
-                    # Marquer la section comme téléchargée
-                    downloaded_sections.append(link["text"])
-                    combined_content += f"<li><h3 id='{link['text'].replace(' ', '_')}'>{link['text']}</h3><div>{sub_content}</div></li>"
+                    soup = BeautifulSoup(sub_content, "html.parser")
+                    sub_title = soup.find("h1")
+                    if sub_title and not sub_title.get("id"):
+                        sub_title["id"] = link["text"].replace(" ", "_")
+                    combined_content += str(soup)
+                    downloaded_sections.append(sub_title["id"])
             except Exception as e:
                 logging.error(f"Erreur lors du traitement du sous-lien : {link['url']} -> {e}")
-        combined_content += "</ul>"
 
         # Mettre à jour les liens internes et externes
         soup = BeautifulSoup(combined_content, "html.parser")
@@ -108,7 +114,7 @@ def main():
             href = link["href"]
             link_text = link.get_text(strip=True)
             
-            if link_text in downloaded_sections:
+            if link_text.replace(" ", "_") in downloaded_sections:
                 # Convertir en ancre interne
                 link["href"] = f"#{link_text.replace(' ', '_')}"
                 logging.info(f"Mis à jour comme ancre interne : {link_text} -> #{link_text.replace(' ', '_')}")
@@ -128,7 +134,6 @@ def main():
 
         browser.close()
         logging.info("Traitement terminé.")
-
 
 if __name__ == "__main__":
     main()
