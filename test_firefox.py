@@ -78,7 +78,9 @@ def main():
 
         # Initialiser le contenu combiné
         combined_content = "<html><head><title>The Hitchhiker's Guide to AutoCAD</title></head><body>"
-        combined_content += f"<h1>Section principale : The Hitchhiker's Guide to AutoCAD</h1>"
+
+        # Liste pour suivre les sections téléchargées
+        downloaded_sections = []
 
         # Extraire le contenu principal de la page principale
         main_content, internal_links = fetch_main_content(page, section_url, base_url)
@@ -86,23 +88,39 @@ def main():
         # Ajouter le contenu principal
         if main_content:
             combined_content += f"<div>{main_content}</div>"
+            downloaded_sections.append("The Hitchhiker's Guide to AutoCAD")  # Ajouter la section principale
 
         # Ajouter le contenu des sous-liens internes
-        combined_content += "<h2>Pages liées</h2><ul>"
         for link in internal_links:
             try:
                 sub_content, _ = fetch_main_content(page, link["url"], base_url)
                 if sub_content:
+                    # Marquer la section comme téléchargée
+                    downloaded_sections.append(link["text"])
                     combined_content += f"<li><h3 id='{link['text'].replace(' ', '_')}'>{link['text']}</h3><div>{sub_content}</div></li>"
             except Exception as e:
                 logging.error(f"Erreur lors du traitement du sous-lien : {link['url']} -> {e}")
         combined_content += "</ul>"
 
-        # Fermer le HTML
-        combined_content += "</body></html>"
+        # Mettre à jour les liens internes et externes
+        soup = BeautifulSoup(combined_content, "html.parser")
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            link_text = link.get_text(strip=True)
+            
+            if link_text in downloaded_sections:
+                # Convertir en ancre interne
+                link["href"] = f"#{link_text.replace(' ', '_')}"
+                logging.info(f"Mis à jour comme ancre interne : {link_text} -> #{link_text.replace(' ', '_')}")
+            elif href.startswith("?guid="):
+                # Convertir les chemins relatifs en URLs absolues
+                link["href"] = urljoin(base_url, href)
+                logging.info(f"Converti en lien absolu : {link['href']}")
+            else:
+                logging.info(f"Conservé comme lien externe : {link_text} -> {link['href']}")
 
         # Sauvegarder le contenu combiné dans un fichier HTML
-        html_path = save_combined_html(combined_content, output_dir, "combined_section.html")
+        html_path = save_combined_html(str(soup), output_dir, "combined_section.html")
 
         # Convertir le fichier HTML en PDF avec pdfkit
         pdf_path = os.path.join(output_dir, "combined_section.pdf")
@@ -110,6 +128,7 @@ def main():
 
         browser.close()
         logging.info("Traitement terminé.")
+
 
 if __name__ == "__main__":
     main()
