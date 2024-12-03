@@ -3,7 +3,7 @@ import logging
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
-import pdfkit
+from weasyprint import HTML
 
 # Configuration du logging
 logging.basicConfig(
@@ -20,19 +20,13 @@ def save_combined_html(content, output_dir, filename):
     logging.info(f"HTML combiné sauvegardé : {file_path}")
     return file_path
 
-def convert_html_to_pdf_with_pdfkit(html_path, pdf_path):
-    """Convertit un fichier HTML en PDF avec pdfkit."""
+def convert_html_to_pdf_with_weasyprint(html_path, pdf_path):
+    """Convertit un fichier HTML en PDF avec WeasyPrint."""
     try:
-        options = {
-            'enable-local-file-access': None,  # Nécessaire pour accéder aux fichiers locaux
-            'page-size': 'A4',
-            'encoding': "UTF-8",
-            'zoom': '1.25'
-        }
-        pdfkit.from_file(html_path, pdf_path, options=options)
-        logging.info(f"PDF généré : {pdf_path}")
+        HTML(html_path).write_pdf(pdf_path)
+        logging.info(f"PDF généré avec WeasyPrint : {pdf_path}")
     except Exception as e:
-        logging.error(f"Erreur lors de la conversion en PDF avec pdfkit : {e}")
+        logging.error(f"Erreur lors de la conversion en PDF avec WeasyPrint : {e}")
 
 def fetch_main_content(page, url, base_url):
     """Récupère le contenu principal de la page."""
@@ -128,9 +122,9 @@ def main():
         # Sauvegarder le contenu combiné dans un fichier HTML
         html_path = save_combined_html(str(soup), output_dir, "combined_section.html")
 
-        # Convertir le fichier HTML en PDF avec pdfkit
+        # Convertir le fichier HTML en PDF avec WeasyPrint
         pdf_path = os.path.join(output_dir, "combined_section.pdf")
-        convert_html_to_pdf_with_pdfkit(html_path, pdf_path)
+        convert_html_to_pdf_with_weasyprint(html_path, pdf_path)
 
         browser.close()
         logging.info("Traitement terminé.")
