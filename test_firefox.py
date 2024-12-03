@@ -1,127 +1,115 @@
 import os
-import json
 import logging
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-from weasyprint import HTML
 from playwright.sync_api import sync_playwright
+import pdfkit
 
 # Configuration du logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("detailed_logs.log", encoding="utf-8")
-    ]
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-def save_file_from_url(url, output_dir):
-    """Télécharge un fichier à partir d'une URL."""
+def save_combined_html(content, output_dir, filename):
+    """Sauvegarde le contenu HTML combiné dans un fichier."""
+    os.makedirs(output_dir, exist_ok=True)
+    file_path = os.path.join(output_dir, filename)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    logging.info(f"HTML combiné sauvegardé : {file_path}")
+    return file_path
+
+def convert_html_to_pdf_with_pdfkit(html_path, pdf_path):
+    """Convertit un fichier HTML en PDF avec pdfkit."""
     try:
-        os.makedirs(output_dir, exist_ok=True)
-        local_filename = os.path.join(output_dir, os.path.basename(url.split('?')[0]))
-        response = requests.get(url, stream=True, timeout=10)
-        response.raise_for_status()
-        with open(local_filename, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        logging.info(f"Fichier téléchargé : {local_filename}")
-        return local_filename
+        options = {
+            'enable-local-file-access': None,  # Nécessaire pour accéder aux fichiers locaux
+            'page-size': 'A4',
+            'encoding': "UTF-8",
+            'zoom': '1.25'
+        }
+        pdfkit.from_file(html_path, pdf_path, options=options)
+        logging.info(f"PDF généré : {pdf_path}")
     except Exception as e:
-        logging.error(f"Erreur lors du téléchargement de {url} : {e}")
-        return None
+        logging.error(f"Erreur lors de la conversion en PDF avec pdfkit : {e}")
 
-def clean_html(html_content, base_url):
-    """Nettoie le contenu HTML et convertit les URI relatifs en absolus."""
-    soup = BeautifulSoup(html_content, "html.parser")
-
-    for tag in soup.find_all(["img", "link", "script"]):
-        attr = "src" if tag.name in ["img", "script"] else "href"
-        if tag.has_attr(attr):
-            tag[attr] = urljoin(base_url, tag[attr])
-
-    # Supprimer les balises inutiles
-    for tag in soup.find_all(lambda t: t.name in ["style", "script"] or t.has_attr("hidden")):
-        tag.decompose()
-
-    return str(soup)
-
-def extract_page_data(page, section_name, link_title, url):
-    """Extrait les données d'une page et gère les fichiers associés."""
+def fetch_main_content(page, url, base_url):
+    """Récupère le contenu principal de la page."""
     try:
-        logging.info(f"Chargement de la page : {link_title} ({url})")
-        page.goto(url)
+        logging.info(f"Accès à la page : {url}")
+        page.goto(url, timeout=20000)
         page.wait_for_load_state("networkidle")
-
-        # Analyse de la page
         soup = BeautifulSoup(page.content(), "html.parser")
-        output_dir = f"outputs/{section_name}"
-        os.makedirs(output_dir, exist_ok=True)
 
-        # Titre principal
-        title = soup.select_one(".head-text h1[itemprop='headline']")
-        title_text = title.text.strip() if title else "Titre introuvable"
-        logging.debug(f"Titre extrait : {title_text}")
+        # Extraire le contenu principal
+        main_content = soup.select_one("article.wbh-caas-viewer > div.caas > div.caas_body")
+        if not main_content:
+            logging.warning(f"Contenu principal introuvable pour : {url}")
+            return None, []
 
-        # Contenu principal
-        article_body = soup.select_one(".body.conbody")
-        content_text = article_body.get_text(separator="\n", strip=True) if article_body else "Contenu introuvable"
+        # Extraire les liens internes dans le contenu principal
+        links = []
+        for link in main_content.find_all("a", href=True):
+            href = link["href"]
+            full_url = urljoin(base_url, href)
+            if full_url.startswith(base_url):  # Assurer qu'il s'agit d'un lien interne
+                links.append({
+                    "text": link.get_text(strip=True),
+                    "url": full_url
+                })
+        logging.info(f"Liens internes dans le contenu principal : {len(links)} trouvés.")
+        for link in links:
+            logging.info(f"- Texte : {link['text']}, URL : {link['url']}")
 
-        # Nettoyage du HTML
-        cleaned_html = clean_html(page.content(), url)
-
-        # Sauvegarde du HTML nettoyé
-        html_file = os.path.join(output_dir, f"{link_title}.html")
-        with open(html_file, "w", encoding="utf-8") as f:
-            f.write(cleaned_html)
-        logging.info(f"HTML sauvegardé : {html_file}")
-
-        # Génération du PDF
-        pdf_file = os.path.join(output_dir, f"{link_title}.pdf")
-        html = HTML(string=cleaned_html)
-        html.write_pdf(pdf_file)
-        logging.info(f"PDF généré avec succès : {pdf_file}")
-
+        return str(main_content), links
     except Exception as e:
-        logging.error(f"Erreur lors du traitement de la page {link_title} : {e}")
+        logging.error(f"Erreur lors de l'accès à la page : {url} -> {e}")
+        return None, []
 
 def main():
     base_url = "https://help.autodesk.com/view/ACD/2022/ENU/"
-    section_name = "Getting Started"
+    section_url = "https://help.autodesk.com/view/ACD/2022/ENU/?contextId=HITCHHIKERSGUIDETOAUTOCADBASICS"
+    output_dir = "outputs/pdf/The Hitchhiker's Guide to AutoCAD"
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        logging.info(f"Accès à l'URL de base : {base_url}")
-        page.goto(base_url)
-        page.wait_for_load_state("networkidle")
 
-        # Ouvrir la section "Getting Started"
-        section_menu = page.locator(f"[role='treeitem'][data-id='AutoCAD-GettingStarted']")
-        if section_menu.count() == 0:
-            logging.error(f"Section '{section_name}' introuvable.")
-            return
+        # Initialiser le contenu combiné
+        combined_content = "<html><head><title>The Hitchhiker's Guide to AutoCAD</title></head><body>"
+        combined_content += f"<h1>Section principale : The Hitchhiker's Guide to AutoCAD</h1>"
 
-        section_menu.locator("span.expand-collapse[role='button']").click()
-        page.wait_for_timeout(1000)
+        # Extraire le contenu principal de la page principale
+        main_content, internal_links = fetch_main_content(page, section_url, base_url)
 
-        # Parcourir les sous-sections
-        links = section_menu.locator("ul[role='group'] a[href]")
-        for i in range(links.count()):
-            link = links.nth(i)
-            title = link.inner_text().strip()
-            href = urljoin(base_url, link.get_attribute("href"))
+        # Ajouter le contenu principal
+        if main_content:
+            combined_content += f"<div>{main_content}</div>"
 
-            # Ignorer la section "AutoCAD Learning Videos"
-            if "Learning Videos" in title:
-                logging.info(f"Ignorer la sous-section : {title}")
-                continue
+        # Ajouter le contenu des sous-liens internes
+        combined_content += "<h2>Pages liées</h2><ul>"
+        for link in internal_links:
+            try:
+                sub_content, _ = fetch_main_content(page, link["url"], base_url)
+                if sub_content:
+                    combined_content += f"<li><h3 id='{link['text'].replace(' ', '_')}'>{link['text']}</h3><div>{sub_content}</div></li>"
+            except Exception as e:
+                logging.error(f"Erreur lors du traitement du sous-lien : {link['url']} -> {e}")
+        combined_content += "</ul>"
 
-            logging.info(f"Traitement de la sous-section : {title}")
-            extract_page_data(page, section_name, title.replace("/", "_"), href)
+        # Fermer le HTML
+        combined_content += "</body></html>"
+
+        # Sauvegarder le contenu combiné dans un fichier HTML
+        html_path = save_combined_html(combined_content, output_dir, "combined_section.html")
+
+        # Convertir le fichier HTML en PDF avec pdfkit
+        pdf_path = os.path.join(output_dir, "combined_section.pdf")
+        convert_html_to_pdf_with_pdfkit(html_path, pdf_path)
 
         browser.close()
+        logging.info("Traitement terminé.")
 
 if __name__ == "__main__":
     main()
